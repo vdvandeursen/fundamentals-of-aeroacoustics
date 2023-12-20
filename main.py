@@ -101,7 +101,7 @@ def calculate_spl_rotor(blade_number, mach_number, theta, thrust, show, ax=None)
         ax.plot(
             time_receiver,
             p,
-            label=f'Blade {i}',
+            label=f'Blade {i+1}',
             linestyle='dotted'
         )
 
@@ -131,7 +131,6 @@ def calculate_spl_rotor(blade_number, mach_number, theta, thrust, show, ax=None)
     if show:
         plt.show()
 
-
     return SPL, PWL
 
 
@@ -144,7 +143,7 @@ if __name__ == "__main__":
 
         for plot_num, theta in enumerate(thetas):
             SPL, PWL = calculate_spl_rotor(
-                blade_number=5,
+                blade_number=blade_number,
                 mach_number=mach_number,
                 theta=theta,
                 thrust=2000,
