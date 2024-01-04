@@ -1,4 +1,5 @@
 import numpy as np
+from scipy import special
 import matplotlib.pyplot as plt
 import itertools
 
@@ -17,7 +18,7 @@ force_radius = 0.85 * rotor_radius  # point of force application
 blade_numbers = [4, 5]
 mach_numbers = [.3, .6]
 
-thetas = np.radians([0, 15, 30, 45, 60, 75, 90])  # radians
+thetas = np.radians(range(0, 91, 15))  # radians
 receiver_distance = 100  # m
 
 
@@ -57,27 +58,28 @@ def calculate_pressure_dipole(t, omega, receiver_distance, phi, force_magnitude)
     return travel_time, p
 
 
-def calculate_spl_rotor(blade_number, mach_number, theta, thrust, show, ax=None):
+def calculate_spl_rotor_in_time_domain(blade_number, mach_number, theta, thrust, show, ax=None):
     omega = mach_number * c / force_radius  # Hz
     n_steps = 1000
 
     if ax is None:
         _, ax = plt.subplots(1)
 
-    time_domain_approach = np.vectorize(calculate_pressure_dipole, excluded=['omega', 'receiver_distance', 'phi', 'force_magnitude'])
+    time_domain_approach = np.vectorize(calculate_pressure_dipole,
+                                        excluded=['omega', 'receiver_distance', 'phi', 'force_magnitude'])
 
     blade_receiver_times = []
     p_blades = []
 
     # Calculate pressure contribution for each blade in time domain approach
     for B in range(0, blade_number):
-        emission_time = np.linspace(0, 4 * np.pi / omega, n_steps) # simulate each dipole 2 full rotations
+        emission_time = np.linspace(0, 4 * np.pi / omega, n_steps)  # simulate each dipole 2 full rotations
         travel_time_blade, p_blade = time_domain_approach(
             emission_time,
             omega=omega,
-            phi=B*2*np.pi/blade_number,
+            phi=B * 2 * np.pi / blade_number,
             receiver_distance=receiver_distance,
-            force_magnitude=thrust/blade_number
+            force_magnitude=thrust / blade_number
         )
         receiver_time_blade = emission_time + travel_time_blade
 
@@ -101,23 +103,23 @@ def calculate_spl_rotor(blade_number, mach_number, theta, thrust, show, ax=None)
         ax.plot(
             time_receiver,
             p,
-            label=f'Blade {i+1}',
+            label=f'Blade {i + 1}',
             linestyle='dotted'
         )
 
-    p_rms = np.sqrt(np.mean(p_receiver**2))
-    SPL = 10*np.log10(p_rms**2 / p_ref**2)
+    p_rms = np.sqrt(np.mean(p_receiver ** 2))
+    SPL = 10 * np.log10(p_rms ** 2 / p_ref ** 2)
 
-    I = p_rms**2 / (rho0 * c)
-    P = I * receiver_distance**2 * 4*np.pi
+    I = p_rms ** 2 / (rho0 * c)
+    P = I * receiver_distance ** 2 * 4 * np.pi
 
-    PWL = 10*np.log10(P/P_ref)
+    PWL = 10 * np.log10(P / P_ref)
 
     # Create plots
     ax.plot(
         time_receiver,
         p_receiver,
-        label=f'Receiver',
+        label='Receiver',
         linewidth=2
     )
 
@@ -134,25 +136,102 @@ def calculate_spl_rotor(blade_number, mach_number, theta, thrust, show, ax=None)
     return SPL, PWL
 
 
+def calculate_spl_rotor_in_frequency_domain(blade_number, mach_number, theta, thrust):
+    omega = mach_number * c / force_radius
+    B = blade_number
+    R0 = force_radius
+    Fs = thrust / blade_number
+
+    p = 0
+
+    for b in range(blade_number):
+        phi = 2 * np.pi * b / blade_number
+
+        for m in range(1, 10):
+            fraction = (-1j * m * B ** 2 * omega * np.exp(-1j * m * B * omega * R0 / c))/(4*np.pi*c*R0)
+            summation = 0
+
+            s = 0
+            summation += Fs * np.exp(-1j * (m * B - s) * (phi - np.pi/2))*special.jv(m*B-s, m*B*mach_number*np.sin(theta))*(
+                -(m*B-s)/(m*B)*(np.sin(gamma)/mach_number)+np.cos(theta)*np.cos(gamma)
+            )
+
+            p_mb = fraction * summation
+
+            p += p_mb
+
+    return p
+
+
 if __name__ == "__main__":
 
+    p = calculate_spl_rotor_in_frequency_domain(
+        blade_number=4,
+        mach_number=0.3,
+        theta=np.radians(20),
+        thrust=2000
+    )
+
+    print('debug')
+
     for blade_number, mach_number in itertools.product(blade_numbers, mach_numbers):
-        fig, axs = plt.subplots(int(np.ceil(len(thetas)/2)), 2, figsize=(19, 10))
+        fig, axs = plt.subplots(int(np.ceil(len(thetas) / 2)), 2, figsize=(19, 10))
 
         fig.suptitle(f'SPL for B={blade_number}, M={mach_number}')
 
         for plot_num, theta in enumerate(thetas):
-            SPL, PWL = calculate_spl_rotor(
+            SPL, PWL = calculate_spl_rotor_in_time_domain(
                 blade_number=blade_number,
                 mach_number=mach_number,
                 theta=theta,
                 thrust=2000,
                 show=False,
-                ax=axs[int(np.floor(plot_num/2)), int(np.ceil(plot_num % 2))]
+                ax=axs[int(np.floor(plot_num / 2)), int(np.ceil(plot_num % 2))]
             )
-        # plt.tight_layout()
 
-            print(f'B={blade_number} M={mach_number}, theta={np.degrees(theta):.2f} gives     SPL={SPL:.2f}dB, PWL={PWL:.2f}dB')
+            print(
+                f'B={blade_number} M={mach_number}, theta={np.degrees(theta):.2f} gives     SPL={SPL:.2f}dB, PWL={PWL:.2f}dB')
 
-        plt.savefig(f'./figs/SPL B{blade_number}M{int(mach_number*10)}.png', dpi=100)
+        plt.savefig(f'./figs/SPL B{blade_number}M{int(mach_number * 10)}.png', dpi=100)
         print('break')
+
+        # ------------------------
+
+        SPL_list = []
+        PWL_list = []
+
+        for theta in thetas:
+            SPL, PWL = calculate_spl_rotor_in_time_domain(
+                blade_number=blade_number,
+                mach_number=mach_number,
+                theta=theta,
+                thrust=2000,
+                show=False,
+                ax=None)
+
+            # do not show the individual plots for the pressure contributions
+            plt.close()
+
+            SPL_list.append(SPL)
+            PWL_list.append(PWL)
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5), dpi=100)
+
+        fig.suptitle(f'SPL and PWL for B={blade_number}, M={mach_number}')
+
+        # plot results, but exclude the last dB value since it is very large and negative
+        stop = -1
+
+        ax1.plot(np.degrees(thetas[:stop]), SPL_list[:stop])
+        ax2.plot(np.degrees(thetas[:stop]), PWL_list[:stop])
+
+        ax1.set_xlim(0, 90)
+        ax2.set_xlim(0, 90)
+
+        ax1.set_xlabel("theta [deg]")
+        ax1.set_ylabel("SPL [dB]")
+
+        ax2.set_xlabel("theta [deg]")
+        ax2.set_ylabel("PWL [dB]")
+
+        plt.savefig(f'./figs/directivity B{blade_number}M{int(mach_number * 10)}.png', dpi=100)
