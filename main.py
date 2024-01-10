@@ -24,17 +24,30 @@ receiver_distance = 100  # m
 
 def calculate_pressure_dipole(t, omega, receiver_distance, phi, force_magnitude):
     receiver_position = receiver_distance * np.array(
-        [np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)])  # Cartesian (x,y,z)
-    force_position = force_radius * np.array([np.cos(omega * t), np.sin(omega * t), 0])  # Cartesian (x,y,z)
+        [np.sin(theta) * np.cos(phi),
+         np.sin(theta) * np.sin(phi),
+         np.cos(theta)]
+    )  # Cartesian (x,y,z)
 
+    force_position = force_radius * np.array([
+        np.cos(omega * t),
+        np.sin(omega * t),
+        0]
+    )  # Cartesian (x,y,z)
+
+    # Function for the periodic force
+    periodic_force = force_magnitude + 0.5 * force_magnitude * np.sin(omega * t)
+    periodic_force = force_magnitude
+
+    # Unit vector r_hat
     r = receiver_position - force_position
     r_hat = r / np.linalg.norm(r)
 
-    F = force_magnitude * np.array(
+    F = periodic_force * np.array(
         [-np.sin(gamma) * np.sin(omega * t), np.sin(gamma) * np.cos(omega * t), np.cos(gamma)])
     M = mach_number * np.array([-np.sin(omega * t), np.cos(omega * t), 0])
 
-    F_dot = force_magnitude * np.array(
+    F_dot = periodic_force * np.array(
         [-omega * np.sin(gamma) * np.cos(omega * t), -omega * np.sin(gamma) * np.sin(omega * t), 0])
     M_dot = mach_number * np.array([-omega * np.cos(omega * t), -omega * np.sin(omega * t), 0])
 
@@ -59,7 +72,7 @@ def calculate_pressure_dipole(t, omega, receiver_distance, phi, force_magnitude)
 
 
 def calculate_spl_rotor_in_time_domain(blade_number, mach_number, theta, thrust, show, ax=None):
-    omega = mach_number * c / force_radius  # Hz
+    omega = mach_number * c / force_radius  # rad/s
     n_steps = 1000
 
     if ax is None:
@@ -139,48 +152,47 @@ def calculate_spl_rotor_in_time_domain(blade_number, mach_number, theta, thrust,
 def calculate_spl_rotor_in_frequency_domain(blade_number, mach_number, theta, thrust):
     omega = mach_number * c / force_radius
     B = blade_number
-    R0 = force_radius
+    R0 = receiver_distance
     Fs = thrust / blade_number
 
-    p = 0
+    P = []
+    freq = []
 
-    for b in range(blade_number):
-        phi = 2 * np.pi * b / blade_number
+    # for b in range(blade_number):
+    #     phi = 2 * np.pi * b / blade_number
 
-        for m in range(1, 10):
-            fraction = (-1j * m * B ** 2 * omega * np.exp(-1j * m * B * omega * R0 / c))/(4*np.pi*c*R0)
-            summation = 0
+    phi = 0
 
-            s = 0
-            summation += Fs * np.exp(-1j * (m * B - s) * (phi - np.pi/2))*special.jv(m*B-s, m*B*mach_number*np.sin(theta))*(
-                -(m*B-s)/(m*B)*(np.sin(gamma)/mach_number)+np.cos(theta)*np.cos(gamma)
-            )
+    for k in range(1, 9):
+        p_mb = 0
 
-            p_mb = fraction * summation
+        for m in [-k, k]:
+            p_mb += -1j * m * B ** 2 * omega / (4*np.pi*c*R0) * Fs * np.exp(1j * m * B * np.pi/2) * \
+                      np.exp(-1j * m * B * (phi + omega * R0 / c)) * special.jv(m*B, m*B*mach_number * np.sin(theta)) * \
+                      np.cos(theta)
 
-            p += p_mb
+        freq.append(m*B*omega/2/np.pi)  # Hz
+        P.append(p_mb)  # unit is Pa / Hz?
 
-    return p
+    P = np.array(P)
+    freq = np.array(freq)
+
+    power = 1/(2*np.pi) * np.sum(np.abs(P) * freq)  # parsevals theorem
+
+    PWL = 10 * np.log10(power / P_ref)
+    SPL = 10*np.log10(np.sum(np.abs(P)/p_ref**2))
+
+    return SPL, PWL
 
 
 if __name__ == "__main__":
-
-    p = calculate_spl_rotor_in_frequency_domain(
-        blade_number=4,
-        mach_number=0.3,
-        theta=np.radians(20),
-        thrust=2000
-    )
-
-    print('debug')
-
     for blade_number, mach_number in itertools.product(blade_numbers, mach_numbers):
         fig, axs = plt.subplots(int(np.ceil(len(thetas) / 2)), 2, figsize=(19, 10))
 
         fig.suptitle(f'SPL for B={blade_number}, M={mach_number}')
 
         for plot_num, theta in enumerate(thetas):
-            SPL, PWL = calculate_spl_rotor_in_time_domain(
+            SPL_t, PWL_t = calculate_spl_rotor_in_time_domain(
                 blade_number=blade_number,
                 mach_number=mach_number,
                 theta=theta,
@@ -189,8 +201,17 @@ if __name__ == "__main__":
                 ax=axs[int(np.floor(plot_num / 2)), int(np.ceil(plot_num % 2))]
             )
 
+            SPL_f, PWL_f = calculate_spl_rotor_in_frequency_domain(
+                blade_number=blade_number,
+                mach_number=mach_number,
+                theta=theta,
+                thrust=2000
+            )
+
             print(
-                f'B={blade_number} M={mach_number}, theta={np.degrees(theta):.2f} gives     SPL={SPL:.2f}dB, PWL={PWL:.2f}dB')
+                f'B={blade_number} M={mach_number}, theta={np.degrees(theta):.2f} gives SPLt={SPL_t:.2f}dB, PWLt={PWL_t:.2f}dB')
+            print(
+                f'B={blade_number} M={mach_number}, theta={np.degrees(theta):.2f} gives SPLf={SPL_f:.2f}dB, PWLf={PWL_f:.2f}dB')
 
         plt.savefig(f'./figs/SPL B{blade_number}M{int(mach_number * 10)}.png', dpi=100)
         print('break')
