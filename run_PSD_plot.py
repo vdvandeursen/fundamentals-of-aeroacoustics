@@ -1,3 +1,5 @@
+import matplotlib.pyplot as plt
+
 from functions import *
 
 
@@ -52,5 +54,6 @@ if __name__ == "__main__":
 
         ax.set_xlabel("Frequency [Hz]")
         ax.set_ylabel("PWL [dBW]")
-        plt.show()
+        # plt.show()
 
+        plt.savefig(f'figs/spectral plot B{blade_number}M{int(tip_mach_number*10)}')

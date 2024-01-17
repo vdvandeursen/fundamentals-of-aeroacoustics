@@ -6,9 +6,9 @@ import tqdm
 
 if __name__ == "__main__":
     scale_factor = 1
-    n_x = 100
-    n_y = 100
-    n_z = 10
+    n_x = 50
+    n_y = 50
+    n_z = 15
 
     x_coordinates = scale_factor * np.linspace(-400, 600, n_x)
     y_coordinates = scale_factor * np.linspace(-500, 500, n_y)

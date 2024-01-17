@@ -27,7 +27,17 @@ def cosspace(start, stop, n):
     return start + (stop - start) * t
 
 
-def calculate_pressure_dipole(t, omega, receiver_distance, phi, force_magnitude, harmonic_loading, theta, tip_mach_number):
+def calculate_pressure_dipole(
+        t,
+        omega,
+        receiver_distance,
+        phi,
+        force_magnitude,
+        harmonic_loading,
+        theta,
+        tip_mach_number
+):
+    """Calculate the pressure caused by a single dipole"""
     receiver_position = receiver_distance * np.array(
         [np.sin(theta) * np.cos(phi),
          np.sin(theta) * np.sin(phi),
@@ -95,13 +105,16 @@ def calculate_spl_rotor_in_time_domain(
         plot_pressure,
         harmonic_loading,
         n_steps=100):
+    """ Calculate rotor noise (SPL, PWL) using time domain approach"""
     omega = tip_mach_number * c / rotor_radius  # rad/s
 
     if plot_pressure:
         _, ax = plt.subplots(1)
 
-    time_domain_approach = np.vectorize(calculate_pressure_dipole,
-                                        excluded=['omega', 'receiver_distance', 'phi', 'force_magnitude', 'theta', 'tip_mach_number'])
+    calculate_pressure_dipole_vectorized = np.vectorize(
+        calculate_pressure_dipole,
+        excluded=['omega', 'receiver_distance', 'phi', 'force_magnitude', 'theta', 'tip_mach_number']
+    )
 
     blade_receiver_times = []
     p_blades = []
@@ -109,7 +122,7 @@ def calculate_spl_rotor_in_time_domain(
     # Calculate pressure contribution for each blade in time domain approach
     for B in range(0, blade_number):
         emission_time = np.linspace(0, 6 * np.pi / omega, n_steps)  # simulate each dipole 3 full rotations
-        travel_time_blade, p_blade = time_domain_approach(
+        travel_time_blade, p_blade = calculate_pressure_dipole_vectorized(
             emission_time,
             omega=omega,
             phi=B * 2 * np.pi / blade_number,
@@ -173,7 +186,17 @@ def calculate_spl_rotor_in_time_domain(
     return SPL, PWL, time_receiver, p_receiver_fluctuations
 
 
-def calculate_spl_rotor_in_frequency_domain(theta, receiver_distance, blade_number, tip_mach_number, thrust, harmonic_loading, phi, return_spl_only=False):
+def calculate_spl_rotor_in_frequency_domain(
+        theta,
+        receiver_distance,
+        blade_number,
+        tip_mach_number,
+        thrust,
+        harmonic_loading,
+        phi,
+        return_spl_only=False
+):
+    """ Calculate rotor noise (SPL, PWL) using frequency domain approach"""
     omega = tip_mach_number * c / rotor_radius  # rad/s
     B = blade_number
     R0 = receiver_distance
