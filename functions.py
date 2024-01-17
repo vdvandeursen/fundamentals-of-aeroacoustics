@@ -1,7 +1,9 @@
 import numpy as np
 from scipy import special
+from scipy.interpolate import CubicSpline
 import matplotlib.pyplot as plt
 import itertools
+import PyOctaveBand
 
 # Constants
 p0 = 101325  # Pa
@@ -15,11 +17,6 @@ gamma = 0  # rad
 rotor_diameter = 1  # m
 rotor_radius = rotor_diameter / 2  # rotor radius
 force_radius = 0.85 * rotor_radius  # point of force application
-blade_numbers = [4, 5]
-tip_mach_numbers = [.3, .6]
-
-# thetas = np.radians(range(0, 91, 15))  # radians
-receiver_distance = 100  # m
 
 
 def cosspace(start, stop, n):
@@ -30,7 +27,7 @@ def cosspace(start, stop, n):
     return start + (stop - start) * t
 
 
-def calculate_pressure_dipole(t, omega, receiver_distance, phi, force_magnitude, harmonic_loading):
+def calculate_pressure_dipole(t, omega, receiver_distance, phi, force_magnitude, harmonic_loading, theta, tip_mach_number):
     receiver_position = receiver_distance * np.array(
         [np.sin(theta) * np.cos(phi),
          np.sin(theta) * np.sin(phi),
@@ -47,8 +44,8 @@ def calculate_pressure_dipole(t, omega, receiver_distance, phi, force_magnitude,
 
     # Function for the periodic force
     if harmonic_loading:
-        periodic_force = force_magnitude + 0.5 * force_magnitude * np.sin(omega * t)
-        periodic_force_dot = 0.5 * omega * force_magnitude * np.cos(omega*t)
+        periodic_force = force_magnitude * np.sin(omega * t)
+        periodic_force_dot = omega * force_magnitude * np.cos(omega*t)
     else:
         periodic_force = force_magnitude
         periodic_force_dot = 0
@@ -64,7 +61,8 @@ def calculate_pressure_dipole(t, omega, receiver_distance, phi, force_magnitude,
     # Product rule
     F_dot = periodic_force * np.array(
         [-np.sin(gamma) * omega * np.cos(omega * t), -omega * np.sin(gamma) * np.sin(omega * t), 0]) + \
-            periodic_force_dot * F / periodic_force
+            periodic_force_dot * np.array(
+        [-np.sin(gamma) * np.sin(omega * t), np.sin(gamma) * np.cos(omega * t), np.cos(gamma)])
 
     M_dot = mach_number * np.array([-omega * np.cos(omega * t), -omega * np.sin(omega * t), 0])
 
@@ -88,15 +86,22 @@ def calculate_pressure_dipole(t, omega, receiver_distance, phi, force_magnitude,
     return travel_time, p
 
 
-def calculate_spl_rotor_in_time_domain(blade_number, tip_mach_number, theta, thrust, plot_pressure, harmonic_loading):
+def calculate_spl_rotor_in_time_domain(
+        blade_number,
+        tip_mach_number,
+        theta,
+        thrust,
+        receiver_distance,
+        plot_pressure,
+        harmonic_loading,
+        n_steps=100):
     omega = tip_mach_number * c / rotor_radius  # rad/s
-    n_steps = 100
 
     if plot_pressure:
         _, ax = plt.subplots(1)
 
     time_domain_approach = np.vectorize(calculate_pressure_dipole,
-                                        excluded=['omega', 'receiver_distance', 'phi', 'force_magnitude'])
+                                        excluded=['omega', 'receiver_distance', 'phi', 'force_magnitude', 'theta', 'tip_mach_number'])
 
     blade_receiver_times = []
     p_blades = []
@@ -110,7 +115,9 @@ def calculate_spl_rotor_in_time_domain(blade_number, tip_mach_number, theta, thr
             phi=B * 2 * np.pi / blade_number,
             receiver_distance=receiver_distance,
             force_magnitude=thrust / blade_number,
-            harmonic_loading=harmonic_loading
+            harmonic_loading=harmonic_loading,
+            theta=theta,
+            tip_mach_number=tip_mach_number
         )
         receiver_time_blade = emission_time + travel_time_blade
 
@@ -123,12 +130,10 @@ def calculate_spl_rotor_in_time_domain(blade_number, tip_mach_number, theta, thr
     time_receiver = np.linspace(time_receiver_lower_bound, time_receiver_upper_bound, n_steps)
 
     p_receiver = 0
-    for i, (receiver_time_blade, p_blade) in enumerate(zip(blade_receiver_times, p_blades)):
-        p = np.interp(
-            x=time_receiver,
-            xp=receiver_time_blade,
-            fp=p_blade
-        )
+    for i, blade_receiver_time in enumerate(blade_receiver_times):
+
+        cs = CubicSpline(blade_receiver_time, p_blades[i], bc_type='not-a-knot')
+        p = cs(time_receiver)
 
         p_receiver += p  # Dipoles are coherent so we do this.
 
@@ -140,7 +145,9 @@ def calculate_spl_rotor_in_time_domain(blade_number, tip_mach_number, theta, thr
                 linestyle='dotted'
             )
 
-    p_rms = np.sqrt(np.mean((p_receiver - np.mean(p_receiver)) ** 2))
+    p_receiver_fluctuations = p_receiver - np.mean(p_receiver)
+
+    p_rms = np.sqrt(np.mean(p_receiver_fluctuations ** 2))
     SPL = 10 * np.log10(p_rms ** 2 / p_ref ** 2)
     PWL = SPL + 11 + 20 * np.log10(receiver_distance)
 
@@ -163,27 +170,27 @@ def calculate_spl_rotor_in_time_domain(blade_number, tip_mach_number, theta, thr
 
         plt.show()
 
-    return SPL, PWL
+    return SPL, PWL, time_receiver, p_receiver_fluctuations
 
 
-def calculate_spl_rotor_in_frequency_domain(blade_number, tip_mach_number, theta, thrust, harmonic_loading):
+def calculate_spl_rotor_in_frequency_domain(theta, receiver_distance, blade_number, tip_mach_number, thrust, harmonic_loading, phi, return_spl_only=False):
     omega = tip_mach_number * c / rotor_radius  # rad/s
     B = blade_number
     R0 = receiver_distance
     mach_number = force_radius / rotor_radius * tip_mach_number
 
-    SPL_mb = []  # SPL of each mb harmonic
-
-    phi = 0
+    SPL_mb = []  # SPL of each B*omega harmonic
+    freqs = []
+    p_mb_s = []
 
     for k in range(1, 20):
         p_mb = 0
 
         for m in [-k, k]:
             if harmonic_loading:
-                # We've defined the harmonic loading as p(t) = thrust + 0.5*thrust*sin(omega t), so we take 1st harmonic
-                s_values = [0, blade_number]
-                Fs_values = [thrust / blade_number, thrust/blade_number/2]
+                # We've defined the harmonic loading as F(t) = thrust*sin(omega t)
+                s_values = [-1, 1]
+                Fs_values = [thrust/blade_number * -1j, thrust/blade_number * 1j]
 
             else:
                 s_values = [0]
@@ -208,71 +215,14 @@ def calculate_spl_rotor_in_frequency_domain(blade_number, tip_mach_number, theta
 
         p_mb_rms = p_mb / np.sqrt(2)  # Root means squared pressure for each harmonic
         SPL_mb.append(10 * np.log10(p_mb_rms ** 2 / p_ref ** 2))  # SPL for each harmonic
+        freqs.append(m*blade_number*omega/2/np.pi)
 
     SPL = 10 * np.log10(sum([10**(SPL/10) for SPL in SPL_mb]))  # Harmonics are incoherent, so summation goes like this
     PWL = SPL + 11 + 20*np.log10(receiver_distance)
 
-    return SPL, PWL
+    PWL_s = np.array(SPL_mb) + 11 + 20*np.log10(receiver_distance)
 
+    if return_spl_only:
+        return SPL
 
-if __name__ == "__main__":
-    for blade_number, tip_mach_number, harmonic in itertools.product(blade_numbers, tip_mach_numbers, [False, True]):
-        SPL_t_list = []
-        PWL_t_list = []
-        SPL_f_list = []
-        PWL_f_list = []
-
-        thetas = cosspace(0, np.pi / 2, 100)
-
-        for plot_num, theta in enumerate(thetas):
-            SPL_t, PWL_t = calculate_spl_rotor_in_time_domain(
-                blade_number=blade_number,
-                tip_mach_number=tip_mach_number,
-                theta=theta,
-                thrust=2000,
-                plot_pressure=False,
-                harmonic_loading=harmonic
-            )
-
-            SPL_f, PWL_f = calculate_spl_rotor_in_frequency_domain(
-                blade_number=blade_number,
-                tip_mach_number=tip_mach_number,
-                theta=theta,
-                thrust=2000,
-                harmonic_loading=harmonic
-            )
-
-            SPL_t_list.append(SPL_t)
-            SPL_f_list.append(SPL_f)
-
-            PWL_t_list.append(PWL_t)
-            PWL_f_list.append(PWL_f)
-
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5), dpi=100)
-
-        fig.suptitle(f'Rotor noise with B={blade_number}, M={tip_mach_number}, and {"harmonic" if harmonic else "constant"} loading')
-
-        # plot results
-        ax1.plot(np.degrees(thetas), SPL_t_list, label='time approach')
-        ax1.plot(np.degrees(thetas), SPL_f_list, label='frequency approach')
-        ax2.plot(np.degrees(thetas), PWL_t_list, label='time approach')
-        ax2.plot(np.degrees(thetas), PWL_f_list, label='frequency approach')
-
-        ax1.set_xlim(0, 90)
-        ax1.set_ylim(0, None)
-        ax2.set_xlim(0, 90)
-        ax2.set_ylim(0, None)
-
-        ax1.legend()
-        ax2.legend()
-
-        ax1.set_xlabel("theta [deg]")
-        ax1.set_ylabel("SPL [dB]")
-
-        ax2.set_xlabel("theta [deg]")
-        ax2.set_ylabel("PWL [dB]")
-
-        ax1.grid()
-        ax2.grid()
-        plt.show()
-        # plt.savefig(f'./figs/directivity B{blade_number}M{int(mach_number * 10)}.png', dpi=100)
+    return SPL, PWL, freqs, PWL_s
